@@ -1,0 +1,7 @@
+[package]
+name = "hon-zoom-hack"
+version = "0.1.0"
+authors = ["Reinis Muiznieks <muiznieks.reinis@gmail.com>"]
+edition = "2018"
+
+[dependencies]
