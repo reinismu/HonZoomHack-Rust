@@ -2,7 +2,7 @@ mod linux_process;
 use failure::{bail, Error};
 use goblin::elf::sym::Sym;
 use proc_maps::Pid;
-use std::{collections::HashMap, intrinsics::transmute};
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct Test {
@@ -50,6 +50,7 @@ fn zoom_hack() -> Result<(), Error> {
     Ok(())
 }
 
+// Tools https://defuse.ca/online-x86-assembler.htm#disassembly
 fn patch(pid: Pid, module_offset: usize, symbol_map: &HashMap<String, Sym>) -> Result<(), Error> {
     let zoom_out_offset = symbol_map.get(ZOOM_OUT).unwrap().st_value as usize;
     let prepare_client_state_offset =
@@ -106,32 +107,21 @@ fn patch(pid: Pid, module_offset: usize, symbol_map: &HashMap<String, Sym>) -> R
         vec![0xEB],
     )?;
 
-    // Send to server max zoom not current zoom!
-    let max_zoom_addr = 0x15FA174_u32; // Needs fixing every update
+    // Don't send current zoom to server!
 
-    // let maxfloat_32 = 0xFEE864_u32;
+    // Nop from from 0x9b till 0xd8 (0x90)
+    // Insert 0xB8, 0x00, 0x00, 0xC8, 0x44, 0x66, 0x0F, 0x6E, 0xC0
 
-    let correct_get_snapshot_offset = get_snapshot_offset - 0x180; // dunno why 0x180
+    let mut buffer = vec![0x90_u8; 61 - 9];
+    // mov eax, 0x44bb8000
+    // movd xmm0,eax
+    let inst_vec = vec![0xB8, 0x00, 0x00, 0xC8, 0x44, 0x66, 0x0F, 0x6E, 0xC0];
+    buffer.extend(&inst_vec);
 
-    let offset: u32 = max_zoom_addr - correct_get_snapshot_offset as u32 - 0x64 - 8 - 4;
-    // let offset_old: u32 = maxfloat_32 - correct_get_snapshot_offset as u32 - 0x64 - 8 - 4;
-    // println!("get_snapshot_offset 0x{:x?}", correct_get_snapshot_offset);
-    // println!("prepare_client_state_offset 0x{:x?}", prepare_client_state_offset);
+    assert!(buffer.len() == 61);
 
-    let bytes: [u8; 4] = unsafe { transmute(offset.to_be()) };
-    println!("New offset 0x{:x?} {:?}", offset, bytes);
-
-    // let bytes_old: [u8; 4] = unsafe { transmute(offset_old.to_be()) };
-    // println!("Old offset 0x{:x?} {:?}", offset_old, bytes_old);
-
-    //CClientState::GetSnapshot + 0x64 (movss   xmm0, cs:maxFloat32k) -> (movss   xmm0, cs:maxZoom)
-    linux_process::write_process_memory(
-        pid,
-        get_snapshot_offset + module_offset + 0x64,
-        vec![
-            0xF3, 0x0F, 0x10, 0x05, bytes[3], bytes[2], bytes[1], bytes[0],
-        ],
-    )?;
+    //CClientState::GetSnapshot + 0x9b Nop stuff and set xmm0 register to 1500.0
+    linux_process::write_process_memory(pid, get_snapshot_offset + module_offset + 0x9b, buffer)?;
 
     Ok(())
 }

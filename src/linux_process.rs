@@ -116,7 +116,7 @@ pub fn write_process_memory(pid: Pid, addr: usize, buffer: Vec<u8>) -> Result<()
             write(pid, address, data as *mut c_void)?;
             println!("{:x?} Wrote at end: {:x?}", address, data);
         }
-        address = (addr as usize + pointer_size) as AddressType;
+        address = (address as usize + pointer_size) as AddressType;
     }
 
     Ok(())
