@@ -2,11 +2,17 @@ mod linux_process;
 use failure::{bail, Error};
 use goblin::elf::sym::Sym;
 use proc_maps::Pid;
-use std::collections::HashMap;
+use std::{collections::HashMap, intrinsics::transmute};
+
+#[derive(Debug)]
+struct Test {
+    meh: String,
+}
 
 const ZOOM_OUT: &str = "_ZN7CPlayer7ZoomOutEv";
 const PREPARE_CLIENT_STATE: &str = "_ZN7CPlayer18PrepareClientStateER12CClientStateb";
 const SETUP_CAMERA: &str = "_ZN7CPlayer11SetupCameraER7CCameraRK5CVec3IfES5_";
+const GET_SNAPSHOT: &str = "_ZNK12CClientState11GetSnapshotER15CEntitySnapshot";
 
 fn zoom_hack() -> Result<(), Error> {
     let process_name = "hon-x86_64";
@@ -49,6 +55,7 @@ fn patch(pid: Pid, module_offset: usize, symbol_map: &HashMap<String, Sym>) -> R
     let prepare_client_state_offset =
         symbol_map.get(PREPARE_CLIENT_STATE).unwrap().st_value as usize;
     let setup_camera_offset = symbol_map.get(SETUP_CAMERA).unwrap().st_value as usize;
+    let get_snapshot_offset = symbol_map.get(GET_SNAPSHOT).unwrap().st_value as usize;
 
     // ZoomOut + 0x4f (minss   xmm1, xmm2) -> (movss   xmm1, xmm2)
     linux_process::write_process_memory(
@@ -97,6 +104,33 @@ fn patch(pid: Pid, module_offset: usize, symbol_map: &HashMap<String, Sym>) -> R
         pid,
         setup_camera_offset + module_offset + 0x5df,
         vec![0xEB],
+    )?;
+
+    // Send to server max zoom not current zoom!
+    let max_zoom_addr = 0x15FA174_u32; // Needs fixing every update
+
+    // let maxfloat_32 = 0xFEE864_u32;
+
+    let correct_get_snapshot_offset = get_snapshot_offset - 0x180; // dunno why 0x180
+
+    let offset: u32 = max_zoom_addr - correct_get_snapshot_offset as u32 - 0x64 - 8 - 4;
+    // let offset_old: u32 = maxfloat_32 - correct_get_snapshot_offset as u32 - 0x64 - 8 - 4;
+    // println!("get_snapshot_offset 0x{:x?}", correct_get_snapshot_offset);
+    // println!("prepare_client_state_offset 0x{:x?}", prepare_client_state_offset);
+
+    let bytes: [u8; 4] = unsafe { transmute(offset.to_be()) };
+    println!("New offset 0x{:x?} {:?}", offset, bytes);
+
+    // let bytes_old: [u8; 4] = unsafe { transmute(offset_old.to_be()) };
+    // println!("Old offset 0x{:x?} {:?}", offset_old, bytes_old);
+
+    //CClientState::GetSnapshot + 0x64 (movss   xmm0, cs:maxFloat32k) -> (movss   xmm0, cs:maxZoom)
+    linux_process::write_process_memory(
+        pid,
+        get_snapshot_offset + module_offset + 0x64,
+        vec![
+            0xF3, 0x0F, 0x10, 0x05, bytes[3], bytes[2], bytes[1], bytes[0],
+        ],
     )?;
 
     Ok(())
